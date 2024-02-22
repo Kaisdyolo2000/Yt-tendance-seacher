@@ -1,0 +1,156 @@
+# Import des modules Flask et autres dépendances
+import os
+import requests
+from flask import Flask, render_template, session, request, redirect, url_for, jsonify
+from dotenv import load_dotenv
+from google_auth_oauthlib.flow import Flow
+import schedule
+import time
+from datetime import datetime, timedelta
+import random
+
+# Initialisation de l'application Flask
+app = Flask(__name__)
+app.secret_key = os.urandom(24)
+
+# Configuration OAuth 2.0
+CLIENT_ID = os.getenv('CLIENT_ID')
+CLIENT_SECRET = os.getenv('CLIENT_SECRET')
+REDIRECT_URI = os.getenv('REDIRECT_URI')
+SCOPES = ['https://www.googleapis.com/auth/youtube.readonly']
+
+# Configuration de l'objet Flow pour l'authentification avec Google
+flow = Flow.from_client_secrets_file(
+    'client_secrets.json',
+    scopes=SCOPES,
+    redirect_uri=REDIRECT_URI)
+
+# Liste des catégories YouTube avec leurs identifiants
+categories_youtube = {
+    "Musique": "10",
+    "Divertissement": "24",
+    # Ajoutez d'autres catégories ici
+}
+
+# Gestion des tarifs pour les abonnements premium
+TARIFS_PREMIUM = {
+    "Basique": 3,
+    "Avancé": 7,
+    "Premium+": 12.99
+}
+
+# Durée d'expiration des abonnements premium+ (en jours)
+EXPIRATION_PREMIUM_PLUS = 180  # 180 jours (6 mois)
+
+# Fonction pour vérifier si l'utilisateur est un abonné premium
+def est_abonne_premium():
+    if 'premium_type' in session:
+        return True
+    return False
+
+# Fonction pour annuler l'abonnement premium+
+def annuler_abonnement_premium_plus():
+    session.pop('premium_type', None)
+    session.pop('premium_plus_expire', None)
+
+# Fonction pour récupérer les vidéos YouTube les plus récentes et populaires par catégorie
+def recuperer_videos_populaires_par_categorie(categorie):
+    url = f"https://www.googleapis.com/youtube/v3/search?key={API_KEY}&part=snippet&order=date&type=video&videoCategoryId={categorie}&maxResults=5"
+    response = requests.get(url)
+    data = response.json()
+    videos = []
+    for item in data["items"]:
+        titre = item["snippet"]["title"]
+        lien = f"https://www.youtube.com/watch?v={item['id']['videoId']}"
+        image = item["snippet"]["thumbnails"]["high"]["url"]
+        videos.append({"titre": titre, "lien": lien, "image": image})
+    return videos
+
+# Fonction pour récupérer les vidéos par catégorie
+def recuperer_videos_par_categorie():
+    videos_par_categorie = {}
+    for categorie, id_categorie in categories_youtube.items():
+        videos = recuperer_videos_populaires_par_categorie(id_categorie)
+        videos_par_categorie[categorie] = videos
+    return videos_par_categorie
+
+# Algorithme pour changer les données des vidéos
+def changer_donnees_videos():
+    global videos_par_categorie
+    videos_par_categorie = recuperer_videos_par_categorie()
+
+# Algorithme pour changer les images pendant les fêtes
+def changer_images_pendant_les_fetes():
+    # Insérez ici votre logique pour changer les images pendant les fêtes
+    pass
+
+# Algorithme pour gérer le signalement des vidéos
+def signaler_video(lien_video):
+    if lien_video in videos_signalements:
+        videos_signalements[lien_video] += 1
+    else:
+        videos_signalements[lien_video] = 1
+    if videos_signalements[lien_video] >= 50:
+        remplacer_video(lien_video)
+
+# Fonction pour remplacer une vidéo signalée
+def remplacer_video(lien_video):
+    # Insérez ici votre logique pour remplacer la vidéo signalée
+    pass
+
+# Planification de l'exécution de la fonction pour changer les données des vidéos toutes les deux semaines
+schedule.every(2).weeks.do(changer_donnees_videos)
+
+# Planification de l'exécution de la fonction pour changer les images pendant les fêtes (par exemple, chaque mois)
+schedule.every().month.do(changer_images_pendant_les_fetes)
+
+# Planification de l'exécution de la fonction pour annuler l'abonnement premium+ chaque mois
+schedule.every().month.do(annuler_abonnement_premium_plus)
+
+# Routes Flask
+@app.route('/')
+def home():
+    if 'youtube_token' in session:
+        return render_template('index.html', youtube_token=session['youtube_token'], categories=categories_youtube, est_premium=est_abonne_premium(), est_expiré_premium_plus=est_expiré_abonnement_premium_plus())
+    else:
+        return redirect(url_for('login'))
+
+@app.route('/login')
+def login():
+    authorization_url, state = flow.authorization_url(prompt='consent')
+    session['state'] = state
+    return redirect(authorization_url)
+
+@app.route('/callback')
+def callback():
+    flow.fetch_token(authorization_response=request.url)
+    if not session['state'] == request.args['state']:
+        return 'Erreur de connexion'
+    credentials = flow.credentials
+    session['youtube_token'] = credentials.token
+    return redirect(url_for('home'))
+
+@app.route('/annuler-abonnement-premium-plus')
+def annuler_abonnement():
+    annuler_abonnement_premium_plus()
+    return redirect(url_for('home'))
+
+@app.route('/signaler-video', methods=['POST'])
+def signaler_video_route():
+    lien_video = request.form['lien_video']
+    signaler_video(lien_video)
+    return jsonify({'success': True})
+
+@app.route('/back-to-top')
+def back_to_top():
+    # Ajoutez ici la logique pour revenir en haut de la page
+    pass
+
+# Boucle pour exécuter les planifications en arrière-plan
+while True:
+    schedule.run_pending()
+    time.sleep(1)
+
+# Point d'entrée de l'application Flask
+if __name__ == '__main__':
+    app.run(debug=True)
